@@ -1,0 +1,533 @@
+---
+title: "Représenter votre futur métier - Analyse"
+author: "Inès Bézie"
+format: 
+    html: default
+    pdf: default
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+## Charger les bibliothèques 
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+
+## Charger le dataframe
+df_genre <- read_excel("226093_representer-votre-futur-metier.xlsx", sheet = "Page 1")
+
+## Renommer les colonnes importantes
+
+df_genre <- df_genre |>
+  rename(
+    Genre = `Je suis`,
+    Etablissement = `Je suis dans l'établissement suivant`,
+    Classe = `Dans quelle classe suis-je ?`,
+    Avis_formulaire = `J'ai apprécié de répondre à ce formulaire`
+  ) 
+df_genre <- df_genre |>
+  mutate(Genre = tolower(str_trim(Genre))) |>
+  mutate(Genre = recode(Genre,
+                        "un garçon" = "Garçon",
+                        "une fille" = "Fille"))
+
+```
+
+# Analyse générale
+
+## Méthodologie
+
+Pour pouvoir mettre en lumière les stéréotypes liées au genre dans le monde du travail chez les élèves, nous pouvons créer un indice de stéréotype. Cet indice se construit par la moyenne des réponses aux 20 questions par individu. Plus la moyenne est élevée, plus les réponses données par cet individu vont dans le sens des stéréotypes.
+
+NB. Pour homogénéiser l'indice, certaines affirmations ont été inversées pour toujours avoir 10 = très stéréotypé.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+## Questions dont les réponses sont à inverser (affirmations non stéréotypées)
+a_inverser <- c(
+  "Une femme est capable de diriger une équipe.",
+  "Il devrait y avoir autant d'hommes que de femmes dans chaque métier : la parité.",
+  "Une femme est autant capable qu'un homme de réaliser des tâches très physiques.",
+  "Une femme est capable de manipuler des produits dangereux.",
+  "Les femmes ont leur place dans des métiers occupés majoritairement par des hommes."
+)
+
+## Inverser les scores dans les colonnes précédentes
+for (col in a_inverser) {
+  if (col %in% names(df_genre)) {
+    df_genre[[col]] <- 11 - as.numeric(df_genre[[col]])
+  }
+}
+
+## Calculer l'indice de stéréotype
+df_genre$Indice_stereotype <- rowMeans(df_genre[, 3:22], na.rm = TRUE)
+```
+
+Par la suite, nous pouvons étudier les corrélations entre indice de stéréotype et déterminants sociaux.
+
+## Résultats
+
+### Comparaison par genre
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+## Moyennes par genre (fille vs. garçon)
+df_genre |>
+  group_by(Genre) |>
+  summarise(
+    Moyenne = mean(Indice_stereotype, na.rm = TRUE),
+    SD = sd(Indice_stereotype, na.rm = TRUE),
+    n = n()
+  )
+
+# Boxplot par genre
+ggplot(df_genre, aes(x = Genre, y = Indice_stereotype, fill = Genre)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Indice de stéréotypes selon le genre", y = "Indice stéréotype") +
+  theme_minimal()
+
+# Test t de Student : on enlève les observations où les personnes n'ont pas souhaité déclaré leur genre (seulement  observations => normalement pas de biais induits)
+df_genre_2 <- df_genre |>
+  filter(Genre == "Garçon" | Genre == "Fille")
+
+t.test(Indice_stereotype ~ Genre, data = df_genre_2)
+
+```
+
+La moyenne féminine des indices de stéréotypes est de 3,01 tandis qu'elle est de 4,41 pour les garçons.
+
+Le test t de Student (version de Welch, adaptée aux variances inégales) révèle une différence significative entre les filles et les garçons en ce qui concerne l’indice de stéréotype. On observe un p-value \< 2.2e-16 : la différence observée est hautement significative statistiquement.
+
+L’intervalle de confiance à 95 % de la différence entre les moyennes est : \[-1,70 ; -1,10\] : En moyenne, les garçons ont un indice de stéréotype entre 1,1 et 1,7 points plus élevé que les filles.
+
+### Comparaison selon le niveau d'étude
+
+Dans un premier temps, nous pouvons étudier si l'indice de stéréotype et le niveau d'étude de l'élève émettent une corrélation.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+## Création d'une variable catégorielle pour les niveaux de classe (1 = 5e, 6 = Terminale)
+df_genre_classe <- df_genre |>
+  mutate(Niveau_etude = case_when(
+    str_detect(Classe, "5e") ~ 1,
+    str_detect(Classe, "4e") ~ 2,
+    str_detect(Classe, "3e") ~ 3,
+    str_detect(Classe, "2nde") ~ 4,
+    str_detect(Classe, "1ère") ~ 5,
+    str_detect(Classe, "Terminale") ~ 6,
+    TRUE ~ NA_real_
+  ))
+
+## Corrélation entre indice de stéréotype et niveaux de classe
+cor.test(df_genre_classe$Indice_stereotype, df_genre_classe$Niveau_etude, use = "complete.obs")
+
+```
+
+Il existe une corrélation négative significative entre le niveau d’étude (de la 6e à la Terminale) et l’indice de stéréotype. Plus les élèves avancent dans leur parcours scolaire, plus leur vision des métiers semble moins stéréotypée. Même si le lien est modéré (r ≈ -0.21), il est statistiquement solide et va dans le sens d’une évolution positive avec l’âge/la maturité.
+
+Nous pouvons à présent regarder s'il existe une différence statistiquement significative entre collégiens et lycéens relative à leur vision des métiers stéréotypés.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+## Créer une variable "Niveau collège/lycée" à partir des classes
+df_genre <- df_genre |>
+  mutate(Niveau = case_when(
+    str_detect(Classe, regex("5e|4e|3e", ignore_case = TRUE)) ~ "Collège",
+    str_detect(Classe, regex("2nde|1ère|Terminale", ignore_case = TRUE)) ~ "Lycée",
+    TRUE ~ NA_character_
+  ))
+
+## Moyenne par niveau (collège vs. lycée)
+df_genre |>
+  group_by(Niveau) |>
+  summarise(Moyenne = mean(Indice_stereotype, na.rm = TRUE), SD = sd(Indice_stereotype, na.rm = TRUE), n = n())
+
+# Boxplot collège vs lycée
+ggplot(df_genre, aes(x = Niveau, y = Indice_stereotype, fill = Niveau)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Stéréotypes selon le niveau scolaire", y = "Indice stéréotype") +
+  theme_minimal()
+
+# Test t
+t.test(Indice_stereotype ~ Niveau, data = df_genre)
+```
+
+Le test t de Student indique que les collégiens ont un indice de stéréotype significativement plus élevé que les lycéens. Avec une intervalle de confiance de 95%, la différence moyenne est estimée entre 0,46 et 1,12 points. On peut donc dire que les collégiens ont entre un demi-point et un point entier de plus en moyenne sur l’échelle de stéréotypes.
+
+Cela rejoint notre résultat précédent qui a mis en lumière une corrélation signficativement négative du niveau d'étude avec l'indice de stéréotype des élèves. L’exposition à la diversité des parcours ou la maturité cognitive semblent pouvoir atténuer certains stéréotypes.
+
+### Comparaison selon l'Indice de Position Sociale
+
+L'Indice de Position Sociale est un indicateur statistique qui permet de rendre compte de la composition sociale de l’établissement. Deux valeurs statistiques peuvent être analysées :
+
+-   la valeur moyenne des IPS des élèves de l'établissement, qui mesure le degré moyen d'avantage social à l'apprentissage
+
+-   l'écart-type associé à l'IPS des établissements, qui correspond à l'écart de conditions sociales au sein d'une école, pouvant servir de mesure de mixité sociale
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+## Créer un tableau avec les données IPS des établissements 
+ips_data <- tibble::tibble(
+  Etablissement = c(
+    "Maupertuis",
+    "Pierre Mendès France",
+    "René-Guy CADOU",
+    "Charles De Gaulle",
+    "Camille Guérin"
+  ),
+  IPS = c(107.2, 123.6, 101.2, 122.6, 94.2),
+  Ecart_type_IPS = c(31.9, 37.2, 27.5, 35.7, 29.1)
+)
+
+# Fusionner avec la table IPS
+df_genre <- df_genre |>
+  left_join(ips_data, by = "Etablissement")
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+# Corrélation entre IPS moyen et stéréotypes
+cor.test(df_genre$Indice_stereotype, df_genre$IPS, use = "complete.obs")
+
+# Visualisation : stéréotypes ~ IPS
+ggplot(df_genre, aes(x = IPS, y = Indice_stereotype)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkblue") +
+  labs(title = "Indice de stéréotype selon l'IPS de l’établissement",
+       x = "IPS moyen",
+       y = "Indice de stéréotype") +
+  theme_minimal()
+
+```
+
+L’analyse statistique révèle une corrélation négative significative entre l’Indice de Position Sociale (IPS) moyen des établissements et l’indice de stéréotype exprimé par les élèves (r = -0.30, p \< 0.001). Autrement dit, plus l’IPS est élevé — reflétant un contexte social plus favorisé —, moins les élèves ont tendance à adhérer à des stéréotypes genrés sur les métiers. Cette tendance suggère une influence du milieu socio-éducatif sur la perception genrée du monde professionnel.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+# Corrélation avec écart-type de l’IPS (mixité sociale)
+cor.test(df_genre$Indice_stereotype, df_genre$Ecart_type_IPS, use = "complete.obs")
+
+# Visualisation : stéréotypes ~ écart-type IPS
+ggplot(df_genre, aes(x = Ecart_type_IPS, y = Indice_stereotype)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkgreen") +
+  labs(title = "Stéréotypes et mixité sociale (écart-type IPS)",
+       x = "Écart-type IPS (mixité sociale)",
+       y = "Indice de stéréotype") +
+  theme_minimal()
+```
+
+Une corrélation négative significative est observée entre l’écart-type de l’IPS par établissement — indicateur de la mixité sociale — et l’indice de stéréotype des élèves (r = -0.23, p \< 0.001). Cela suggère que dans les établissements présentant une plus grande diversité sociale, les élèves expriment en moyenne moins de stéréotypes de genre. Cette relation pourrait refléter un effet bénéfique de la mixité sociale sur la déconstruction des représentations genrées du monde professionnel.
+
+# Biais
+
+### Biais de désirabilité
+
+Les élèves auraient pu répondre selon ce qu'ils pensaient qu'on attendait d'eux, plutôt que ce qu'ils pensent vraiment.
+
+Pour cela, on peut d'abord regarder la distribution des réponses. Si on observe beaucoup de 1/10, il pourrait avoir une sur-réponse de ce qui est vu comme socialement acceptable.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+## Créer une liste avec les questions
+questions_stereotypes <- colnames(df_genre)[3:22]
+
+## Reshape en long format
+df_genre_questions <- df_genre %>%
+  pivot_longer(
+    cols = all_of(questions_stereotypes),
+    names_to = "Question",
+    values_to = "Réponse"
+  )
+
+## Visualisation : Distribution des réponses par question
+ggplot(df_genre_questions, aes(x = Réponse)) +
+  geom_histogram(binwidth = 1, fill = "#009E73", color = "white") +
+  scale_x_continuous(breaks = 1:10) +
+  facet_wrap(~ Question, scales = "free_y") +
+  labs(
+    title = "Distribution des réponses aux questions sur les stéréotypes",
+    x = "Réponse (1 à 10)",
+    y = "Effectif"
+  ) +
+  theme_minimal(base_size = 11)
+
+```
+
+On voit qu'en majorité, les élèves ont bien répondu dans les extremas. Attention ! Les élèves n'ont pas répondu en majorité par Pas du tout d'accord. Cela advient de la manipulation précédente ayant inversé la réponse à certaines questions. Cela ne contredit néanmoins pas la tendance majoritaire de répondre par les possibilités à l'extrême, qui peuvent être vu comme des "bonnes" réponses.
+
+On peut aussi analyser les écart-types de réponses par élève pour déceler la possibilité de réponse automatique.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+# Écart type des réponses par élève
+df_genre$ecart_type_individuel <- apply(df_genre[, questions_stereotypes], 1, sd, na.rm = TRUE)
+
+# Histogramme des écarts types
+hist(df_genre$ecart_type_individuel, main = "Écart-type des réponses individuelles", xlab = "Écart-type")
+
+```
+
+Curieusement, l'écart-type de réponses des élèves se concentre autour de 2-3. Cela signifie que les élèves varient leur réponse en moyenne, donc l'effet de biais de désirabilité sociale est plus limité.
+
+Néanmoins, il faut tenir compte des questions pouvant induire un éventuel biais d’interprétation des échelles. Cela peut avoir pour conséquence de centrer les réponses autour de 5. Pour certaines questions, cocher 1 = Pas du tout d'accord pouvait signifier pour l'élève que l'inverse de l'affirmation est vrai. On observe en effet sur la distribution par question au-dessus, que certaines questions concentrent les réponses "moyennes" autour de 5, comme par exemple :
+
+-   "Il y a plus d'hommes menuisiers que de femmes menuisières."\
+-   "Les psychologues sont en général des hommes"\
+-   "En général, les hommes sont plus résistants que les femmes."\
+-   "En général, les femmes sont plus douées que les hommes pour prendre soin des enfants."\
+-   "Il y a plus d'hommes juges que de femmes juges."\
+-   "Les femmes sont plus minutieuses que les hommes."
+
+Si on enlève ces questions de la liste et on recalcule l'écart-type de réponse par élève, on peut obtenir une distribution moins biaisée.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+questions_ambiguës <- setdiff(questions_stereotypes, c(
+  "Il y a plus d'hommes menuisiers que de femmes menuisières.",
+  "Les psychologues sont en général des hommes",
+  "En général, les hommes sont plus résistants que les femmes.",
+  "En général, les femmes sont plus douées que les hommes pour prendre soin des enfants.",
+  "Il y a plus d'hommes juges que de femmes juges.",
+  "Les femmes sont plus minutieuses que les hommes."
+  ))
+  
+
+# Écart type des réponses par élève
+df_genre$ecart_type_individuel <- apply(df_genre[, questions_ambiguës], 1, sd, na.rm = TRUE)
+
+# Histogramme des écarts types
+hist(df_genre$ecart_type_individuel, main = "Écart-type des réponses individuelles", xlab = "Écart-type")
+```
+
+On observe alors un décalage de l'écart-type moyen des réponses vers la gauche, avec une concentration autour de 1-2. Les élèves varient donc moins leur réponse en l'absence de questions à interprétation ambiguë.
+
+# Analyse par catégories de questions
+
+## Méthodologie
+
+Pour affiner l'analyse, on peut distinguer trois types de questions posées lors de l'enquête :
+
+-   Questions factuelles, vérifiables par les données
+
+-   Questions d'opinion, liées à des jugements de valeur, préjugés ou représentations
+
+Au sein des questions d'opinion, on peut distinguer à nouveau des questions liés aux stéréotypes en général et ceux liés au monde du travail.
+
+-   Questions à interprétation ambiguë ou qui abordent d'autres concepts
+
+On peut alors définir quatre listes à partir de cette catégorisation pour analyser les différences de sensibilité des élèves par rapport à celle-ci. On recrée les différentes indices comme dans la première partie.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+## Questions factuelles
+questions_factuelles <- c(
+  "Il y a plus d'hommes menuisiers que de femmes menuisières.",
+  "Il y a plus d'hommes juges que de femmes juges.",
+  "Les psychologues sont en général des hommes"
+)
+
+## Questions stéréotypes générales
+questions_stereotypes_2 <- c(
+  "En général, les femmes sont plus douées que les hommes pour prendre soin des enfants.",
+  "La patience et l'écoute sont des qualités  féminines .",
+  "En général, les hommes sont plus résistants que les femmes.",
+  "Une femme est autant capable qu'un homme de réaliser des tâches très physiques.",
+  "Une femme est capable de manipuler des produits dangereux.",
+  "Les femmes sont plus minutieuses que les hommes."
+)
+
+## Questions stéréotypes métiers
+questions_metiers <- c(
+  "Il y a des métiers faits pour les hommes et d'autres faits pour les femmes",
+  "Les métiers du soin, de l'aide à la personne, font appel à des compétences  féminines",
+  "De nombreux postes sont actuellement occupés majoritairement par des hommes et depuis toujours, c'est ainsi que cela fonctionne le mieux.",
+  "Une femme est capable de diriger une équipe.",
+  "Le métier d'ingénieur fait appel à des compétences  masculines .",
+  "Les femmes sont de meilleures enseignantes que les hommes.",
+  "Le métier d'infirmier&middot;ère fait appel à des compétences  féminines .",
+  "Les femmes ont leur place dans des métiers occupés majoritairement par des hommes.",
+  "L'agriculture et l'élevage propose des métiers qui font appel à des compétences  masculines ."
+)
+
+## Questions ambiguës
+questions_ambiguës_2 <- c(
+  "Il devrait y avoir autant d'hommes que de femmes dans chaque métier : la parité.",
+  "Les hommes sont naturellement doués pour diriger des équipes et prendre des décisions." 
+)
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+## Calcul des indices factuel et stéréotypes :
+
+df_genre$Indice_factuel <- rowMeans(df_genre[, questions_factuelles], na.rm = TRUE)
+df_genre$Indice_stereotype_gen <- rowMeans(df_genre[, questions_stereotypes_2], na.rm = TRUE)
+df_genre$Indice_stereotype_met <- rowMeans(df_genre[, questions_metiers], na.rm = TRUE)
+df_genre$Indice_ambigue <- rowMeans(df_genre[, questions_ambiguës_2], na.rm = TRUE)
+
+```
+
+## Résultats
+
+### Corrélation entre les indices catégorielles
+
+En premier lieu, on peut essayer de détecter une corrélation dans les résultats relatifs aux questions de stéréotype de type général et professionnel, puis dans les résultats aux questions de stéréotypes de métier et factuelles (comparer ces deux indices semblent plus cohérents dans la mesure où les questions factuelles portent sur des statistiques de métiers).
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+cor.test(df_genre$Indice_stereotype_gen, df_genre$Indice_stereotype_met, use = "complete.obs")
+
+```
+
+On trouve une corrélation positive très forte et significative entre les réponses données relativement aux stéréotypes généraux et professionnels (r = 0.75, p \< 0.001). On peut en déduire qu'à plus de 75% des cas, les élèves qui ont répondu de manière à confirmer les stéréotypes dans la vie courante ont aussi répondu ainsi dans le cas spécifique du monde du travail.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+cor.test(df_genre$Indice_factuel, df_genre$Indice_stereotype_met, use = "complete.obs")
+
+```
+
+Une corrélation positive significative est observée entre l’indice factuel et l’indice de stéréotypes métiers (r = 0,51 ; p \< 0,001). Autrement dit, plus les élèves perçoivent une répartition genrée dans le monde professionnel (ex. : "Il y a plus d'hommes menuisiers que de femmes menuisières."), plus ils ont tendance à exprimer des stéréotypes sur les métiers. Ce lien suggère une possible confusion entre des constats sociaux et des jugements normatifs, où ce qui est perçu comme une réalité devient, pour certains élèves, une forme de justification implicite.
+
+### Comparaison selon le genre, niveau et IPS du nouvel indice de stéréotype
+
+On peut vérifier comment les différences entre scores de stéréotypes (maintenant affinés) selon le genre, niveau et IPS ont évoluées par rapport à l'analyse initiale.
+
+On compare les deux indices de stéréotypes entre filles et garçons avec un modèle ANOVA à deux facteurs. Ceci va permettre de comparer les moyennes des groupes et déterminer si au moins une moyenne est significativement différente des autres.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Test ANOVA
+## Passer en format long
+df_long <- df_genre |>
+  select(Genre, Indice_stereotype_gen, Indice_stereotype_met) |>
+  pivot_longer(cols = starts_with("Indice"),
+               names_to = "Type_indice",
+               values_to = "Valeur") |>
+  mutate(Type_indice = ifelse(Type_indice == "Indice_stereotype_gen", "Général", "Métiers"))
+
+# Enlever les NA et "non concerné"
+df_long <- df_long |>
+  filter(Genre == "Fille" | Genre == "Garçon")
+
+# ANOVA à deux facteurs
+res_aov <- aov(Valeur ~ Genre * Type_indice, data = df_long)
+summary(res_aov)
+
+```
+
+La variable Genre mesure la différence générale entre filles et garçons, tout indice confondu. On retrouve le résultat de la première partie : les garçons ont un niveau de stéréotypes significativement plus élevé que les filles.
+
+La variable Type_indice mesure si le niveau de stéréotype est plus fort dans les représentations générales par rapport au monde professionnel (sans distinction de genre). Ici, on trouve que Type_indice est fortement significatif (p \< 2e-16), don les représentations stéréotypés sont effectivement plus forts en général que dans le monde du travail.
+
+La variable d'interaction Genre × Type_Indice indique si l’écart entre les deux indices est différent selon le genre, c'est-à-dire s'il y a une véritable différence structurelle entre la vision des filles et des garçons. Or, on trouve un écart non significatif entre les deux indices. Il s'ensuit que filles et garçons distinguent les sphères pro/générale de manière comparable.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+
+## Corrélation entre indice de stéréotype et niveaux de classe
+
+df_genre_classe <- df_genre |>
+  mutate(Niveau_etude = case_when(
+    str_detect(Classe, "5e") ~ 1,
+    str_detect(Classe, "4e") ~ 2,
+    str_detect(Classe, "3e") ~ 3,
+    str_detect(Classe, "2nde") ~ 4,
+    str_detect(Classe, "1ère") ~ 5,
+    str_detect(Classe, "Terminale") ~ 6,
+    TRUE ~ NA_real_
+  ))
+
+cor.test(df_genre_classe$Indice_stereotype_met, df_genre_classe$Niveau_etude, use = "complete.obs")
+
+cor.test(df_genre_classe$Indice_stereotype_gen, df_genre_classe$Niveau_etude, use = "complete.obs")
+
+cor.test(df_genre_classe$Indice_factuel, df_genre_classe$Niveau_etude, use = "complete.obs")
+
+# Test ANOVA
+
+## Passer en format long
+df_long <- df_genre |>
+  select(Niveau, Indice_stereotype_gen, Indice_stereotype_met) |>
+  pivot_longer(cols = starts_with("Indice"),
+               names_to = "Type_indice",
+               values_to = "Valeur") |>
+  mutate(Type_indice = ifelse(Type_indice == "Indice_stereotype_gen", "Général", "Métiers"))
+
+# ANOVA à deux facteurs
+res_aov <- aov(Valeur ~ Niveau * Type_indice, data = df_long)
+summary(res_aov)
+
+
+
+```
+
+La corrélation entre les indices de stéréotype et les niveaux de classe reste relativement similaire au résultat de la première partie. On trouve une nouvelle fois une plus forte corrélation de l'indice liée au métier avec les niveaux de classe par rapport à l'indice général.
+
+En revanche, on observe que l'indice factuel (qui recense la moyenne sur les questions chiffrables) n'est pas corrélé (coefficient proche de 0, p-value \> 0.1) avec le niveau de classe.
+
+A nouveau l'ANOVA à deux facteurs recense une différence significative entre collégiens et lycéens toute indice confondue. De même, le niveau de stéréotype est plus fort dans les représentations générales par rapport au monde professionnel (cf. résultat ANOVA \~ Genre). Cependant, l'interaction entre les deux variables donne à nouveau une différence non significative : l'écart de stéréotype général/métier n'est pas significativement différente entre collégiens et lycéens.
